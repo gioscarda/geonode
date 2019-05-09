@@ -20,7 +20,7 @@
 
 from django.core.management.base import BaseCommand
 from argparse import RawTextHelpFormatter
-from geonode.base.models import ResourceBase
+from geonode.layers.models import Layer
 from django.contrib.auth.models import Group
 from django.contrib.auth import get_user_model
 
@@ -35,7 +35,7 @@ class Command(BaseCommand):
         - resources (-r, --resources)
         - permissions (-p, --permissions)
     At least one user or one group is required.
-    If no resources are typed all the resources will be considered.
+    If no resources are typed all the layers will be considered.
     At least one permission must be typed.
     Multiple inputs can be typed with comma separator.
     """
@@ -82,7 +82,7 @@ class Command(BaseCommand):
             type=str,
             default=None,
             help='Resources names for which permissions will be assigned to. '
-                 'Default value: None (all the resources will be considered). '
+                 'Default value: None (all the layers will be considered). '
                  'Multiple choices can be typed with comma separator.'
                  'A Note: names with white spaces must be typed inside quotation marks.'
         )
@@ -124,12 +124,12 @@ class Command(BaseCommand):
         groups_names = options.get('groups')
         # Processing information
         if not resources_names:
-            # If resources is None we consider all the existing resources
-            resources = ResourceBase.objects.all()
+            # If resources is None we consider all the existing layer
+            resources = Layer.objects.all()
         else:
             try:
-                resources = ResourceBase.objects.filter(title__in=resources_names)
-            except ResourceBase.DoesNotExist:
+                resources = Layer.objects.filter(title__in=resources_names)
+            except Layer.DoesNotExist:
                 self.stdout.write(
                     'Warning - No resources have been found with these names: {}.'.format(
                         ", ".join(resources_names)
