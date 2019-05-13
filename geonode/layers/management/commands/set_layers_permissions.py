@@ -28,16 +28,18 @@ from django.contrib.auth import get_user_model
 class Command(BaseCommand):
 
     help = """
-    Set permissions to resources for users and groups.
+    Set permissions to layers for users and groups.
     Arguments:
         - users (-u, --users)
         - groups (-g, --groups)
-        - resources (-r, --resources)
+        - layers (-l, --layers)
         - permissions (-p, --permissions)
+        - delete (-d, --delete)
     At least one user or one group is required.
-    If no resources are typed all the layers will be considered.
+    If no layers are typed all the layers will be considered.
     At least one permission must be typed.
-    Multiple inputs can be typed with comma separator.
+    The delete flag means that the permissions will be unset.
+    Multiple inputs can be typed with white space separator.
     """
 
     READ_PERMISSIONS = [
@@ -75,15 +77,15 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument(
-            '-r',
-            '--resources',
-            dest='resources',
+            '-l',
+            '--layers',
+            dest='layers',
             nargs='*',
             type=str,
             default=None,
             help='Resources names for which permissions will be assigned to. '
                  'Default value: None (all the layers will be considered). '
-                 'Multiple choices can be typed with comma separator.'
+                 'Multiple choices can be typed with white space separator.'
                  'A Note: names with white spaces must be typed inside quotation marks.'
         )
         parser.add_argument(
@@ -96,6 +98,14 @@ class Command(BaseCommand):
                  'Allowed values are: read (r), write (w), download (d) and owner (o).'
         )
         parser.add_argument(
+            '-d',
+            '--delete',
+            dest='delete_flag',
+            action='store_true',
+            default=False,
+            help='Delete permission if it exists.'
+        )
+        parser.add_argument(
             '-u',
             '--users',
             dest='users',
@@ -103,7 +113,7 @@ class Command(BaseCommand):
             type=str,
             default=None,
             help='Users for which permissions will be assigned to. '
-                 'Multiple choices can be typed with comma separator.'
+                 'Multiple choices can be typed with white space separator.'
         )
         parser.add_argument(
             '-g',
@@ -113,32 +123,32 @@ class Command(BaseCommand):
             type=str,
             default=None,
             help='Groups for which permissions will be assigned to. '
-                 'Multiple choices can be typed with comma separator.'
+                 'Multiple choices can be typed with white space separator.'
         )
 
     def handle(self, *args, **options):
         # Retrieving the arguments
-        resources_names = options.get('resources')
+        layers_names = options.get('layers')
         permissions_name = options.get('permission')
+        delete_flag = options.get('delete_flag')
         users_usernames = options.get('users')
         groups_names = options.get('groups')
         # Processing information
-        if not resources_names:
-            # If resources is None we consider all the existing layer
-            resources = Layer.objects.all()
+        if not layers_names:
+            # If layers is None we consider all the existing layers
+            layers = Layer.objects.all()
         else:
             try:
-                resources = Layer.objects.filter(title__in=resources_names)
+                layers = Layer.objects.filter(title__in=layers_names)
             except Layer.DoesNotExist:
                 self.stdout.write(
-                    'Warning - No resources have been found with these names: {}.'.format(
-                        ", ".join(resources_names)
+                    'Warning! - No layers have been found with these names: {}.'.format(
+                        ", ".join(layers_names)
                     )
                 )
-        if not resources:
-            self.stdout.write("No resources have been found. No update operations have been executed.")
+        if not layers:
+            self.stdout.write("No layers have been found. No update operations have been executed.")
         else:
-            User = get_user_model()
             # PERMISSIONS
             if not permissions_name:
                 self.stdout.write("No permissions have been provided.")
@@ -165,13 +175,14 @@ class Command(BaseCommand):
                         # USERS
                         users = []
                         if users_usernames:
+                            User = get_user_model()
                             for username in users_usernames:
                                 try:
                                     user = User.objects.get(username=username)
                                     users.append(user)
                                 except User.DoesNotExist:
                                     self.stdout.write(
-                                        'Warning - The user {} does not exists. '
+                                        'Warning! - The user {} does not exists. '
                                         'It has been be skipped.'.format(username)
                                     )
                         # GROUPS
@@ -183,7 +194,7 @@ class Command(BaseCommand):
                                     groups.append(group)
                                 except Group.DoesNotExist:
                                     self.stdout.write(
-                                        'Warning - The group {} does not exists. '
+                                        'Warning! - The group {} does not exists. '
                                         'It has been skipped.'.format(group_name)
                                     )
                         if not users and not groups:
@@ -193,35 +204,43 @@ class Command(BaseCommand):
                             )
                         else:
                             # RESOURCES
-                            for resource in resources:
-                                # Existing permissions on the resource
-                                perm_spec = resource.get_all_level_info()
+                            for layer in layers:
+                                # Existing permissions on the layer
+                                perm_spec = layer.get_all_level_info()
                                 self.stdout.write(
-                                    "Initial permissions info for the resource {}:\n{}".format(
-                                        resource.title, str(perm_spec))
+                                    "Initial permissions info for the layer {}:\n{}".format(
+                                        layer.title, str(perm_spec))
                                 )
                                 for u in users:
-                                    # Check the permission already exists
-                                    if u not in perm_spec["users"]:
+                                    if u == layer.owner:
+                                        self.stdout.write(
+                                            "Warning! - The user {} is the owner of the layer {}. "
+                                            "Owner permissions can't be changed.".format(u, layer.title)
+                                        )
+                                    elif not delete_flag:
                                         perm_spec["users"][u] = permissions
-                                    else:
-                                        u_perms_list = perm_spec["users"][u]
-                                        base_set = set(permissions)
-                                        target_set = set(u_perms_list)
-                                        perm_spec["users"][u] = u_perms_list + list(base_set - target_set)
+                                    elif u in perm_spec["users"]:
+                                        for up in permissions:
+                                            if up in perm_spec["users"][u]:
+                                                perm_spec["users"][u].remove(up)
+                                            else:
+                                                self.stdout.write(
+                                                    "Warning! - Permission {} does not exist for users {} "
+                                                    "on the layers {}".format(up, u, layer.title)
+                                                )
                                 for g in groups:
-                                    # Check the permission already exists
-                                    if g not in perm_spec["groups"]:
+                                    if not delete_flag and g not in perm_spec["groups"]:
                                         perm_spec["groups"][g] = permissions
                                     else:
-                                        g_perms_list = perm_spec["groups"][g]
-                                        base_set = set(permissions)
-                                        target_set = set(g_perms_list)
-                                        perm_spec["groups"][g] = g_perms_list + list(base_set - target_set)
+                                        for gp in permissions:
+                                            if gp in perm_spec["groups"][g] and delete_flag:
+                                                perm_spec["groups"][g].remove(gp)
+                                            elif gp not in perm_spec["groups"][g]:
+                                                perm_spec["groups"][g].append(gp)
                                 # Set final permissions
-                                resource.set_permissions(perm_spec)
+                                layer.set_permissions(perm_spec)
                                 self.stdout.write(
-                                    "Permissions successfully updated!\n"
-                                    "Final permissions info for the resource {}:\n"
-                                    "{}".format(resource.title, str(perm_spec))
+                                    "Final permissions info for the layer {}:\n"
+                                    "{}".format(layer.title, str(perm_spec))
                                 )
+                            self.stdout.write("Permissions successfully updated!")
